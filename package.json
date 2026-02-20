@@ -1,0 +1,12 @@
+{
+  "name": "otoshelapp",
+  "version": "1.0.0",
+  "description": "Desktop mini app with voice-triggered fullscreen away screen",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}
