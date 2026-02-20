@@ -1,0 +1,6 @@
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
+PyAudio>=0.2.14
+vosk>=0.3.45
+SpeechRecognition>=3.10.0
+openai-whisper>=20231117
