@@ -1,35 +1,6 @@
 const APP_CONFIG = {
   overlayText: 'Я отошел. Скоро вернусь.',
-  debounceMs: 8000,
-  recognitionLang: 'ru-RU',
-  monitorEmptyText: 'Тишина…',
-  maxConsecutiveNetworkErrors: 4,
-  restartBackoffMs: {
-    min: 400,
-    max: 12000,
-    factor: 1.8
-  },
-  triggerPhrases: {
-    away: [
-      'я отойду',
-      'я отошел',
-      'я срать',
-      'я покакать',
-      'я скоро вернусь',
-      'я ненадолго',
-      'отойду на минуту',
-      'я щас вернусь'
-    ],
-    back: ['я вернулся', 'я тут', 'я на месте', 'вернулся', 'я уже тут']
-  },
-  semanticKeywords: {
-    away: [
-      ['отойду', 'отошел', 'отошла', 'ушел', 'ушла'],
-      ['вернусь', 'скоро'],
-      ['туалет', 'срать', 'покакать', 'уборную']
-    ],
-    back: [['вернулся', 'вернулась', 'тут', 'на месте', 'дома', 'здесь']]
-  }
+  monitorEmptyText: 'Тишина…'
 };
 
 const mode = new URLSearchParams(window.location.search).get('mode') || 'overlay';
@@ -41,19 +12,8 @@ const monitorMetaElement = document.getElementById('monitorMeta');
 const monitorStatusElement = document.getElementById('monitorStatus');
 const monitorHintElement = document.getElementById('monitorHint');
 
-function writeLog(level, message, meta = undefined) {
-  window.electronAPI.writeLog({ level, message, meta: { mode, ...meta } });
-}
-
 if (overlayTextElement) {
   overlayTextElement.textContent = APP_CONFIG.overlayText;
-}
-
-if (mode === 'listener') {
-  document.body.style.background = 'transparent';
-  document.querySelector('.ambient')?.remove();
-  overlayElement?.remove();
-  monitorElement?.remove();
 }
 
 if (mode === 'overlay') {
@@ -65,74 +25,6 @@ if (mode === 'monitor') {
   overlayElement?.remove();
   document.body.style.background = 'transparent';
   monitorElement?.classList.remove('hidden');
-}
-
-let lastTriggerTs = 0;
-let overlayVisible = false;
-let listenerStatus = '';
-let inRecovery = false;
-
-function setListenerStatus(status, hint = '') {
-  if (mode !== 'listener' || !status || listenerStatus === status) {
-    return;
-  }
-
-  listenerStatus = status;
-  window.electronAPI.notifyStatus({
-    status,
-    hint,
-    ts: Date.now()
-  });
-  writeLog('INFO', `status changed: ${status}`, hint ? { hint } : undefined);
-}
-
-function normalize(text) {
-  return text
-    .toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function includesPhrase(text, phrase) {
-  return text.includes(normalize(phrase));
-}
-
-function semanticMatch(text, groups, minGroups = 1) {
-  let matches = 0;
-  for (const synonyms of groups) {
-    if (synonyms.some((word) => text.includes(word))) {
-      matches += 1;
-    }
-  }
-  return matches >= minGroups;
-}
-
-function classifyTranscript(raw) {
-  const text = normalize(raw);
-
-  const awayExact = APP_CONFIG.triggerPhrases.away.some((phrase) => includesPhrase(text, phrase));
-  const backExact = APP_CONFIG.triggerPhrases.back.some((phrase) => includesPhrase(text, phrase));
-
-  if (awayExact || semanticMatch(text, APP_CONFIG.semanticKeywords.away, 1)) {
-    return 'away';
-  }
-
-  if (backExact || semanticMatch(text, APP_CONFIG.semanticKeywords.back, 1)) {
-    return 'back';
-  }
-
-  return 'none';
-}
-
-function canTrigger() {
-  const now = Date.now();
-  if (now - lastTriggerTs < APP_CONFIG.debounceMs) {
-    return false;
-  }
-  lastTriggerTs = now;
-  return true;
 }
 
 function updateMonitor(payload) {
@@ -159,18 +51,6 @@ function updateMonitorStatus(payload) {
   monitorStatusElement.textContent = `статус: ${status}`;
   if (monitorHintElement) {
     monitorHintElement.textContent = `подсказка: ${hint}`;
-  }
-}
-
-function onVoiceCommand(kind) {
-  if (kind === 'away' && !overlayVisible && canTrigger()) {
-    window.electronAPI.notifyAway();
-    overlayVisible = true;
-  }
-
-  if (kind === 'back' && overlayVisible && canTrigger()) {
-    window.electronAPI.notifyBack();
-    overlayVisible = false;
   }
 }
 
@@ -206,183 +86,5 @@ function setupMonitorSubscriptions() {
   });
 }
 
-function getErrorHint(errorCode) {
-  const hints = {
-    network: 'нет связи с сервисом речи: проверьте интернет/VPN/фаервол и доступ к Google Speech',
-    'not-allowed': 'доступ к микрофону запрещен в Windows или браузерном движке Electron',
-    'service-not-allowed': 'сервис распознавания заблокирован политиками системы/браузера',
-    'no-speech': 'речь не обнаружена: проверьте выбранный микрофон и уровень сигнала',
-    'audio-capture': 'аудиовход недоступен: проверьте устройство записи в Windows'
-  };
-  return hints[errorCode] || 'см. app.log для кода ошибки и диагностики';
-}
-
-async function ensureMicrophoneAccess() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    setListenerStatus('mediaDevices API недоступен', 'в сборке Electron нет API mediaDevices');
-    throw new Error('mediaDevices API недоступен');
-  }
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    }
-  });
-
-  stream.getTracks().forEach((track) => track.stop());
-  setListenerStatus('микрофон доступен');
-}
-
-async function startRecognition() {
-  if (mode !== 'listener') {
-    return;
-  }
-
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  if (!SpeechRecognition) {
-    setListenerStatus('Web Speech API недоступен', 'в этой среде нужен fallback на оффлайн движок, например Vosk');
-    writeLog('ERROR', 'Web Speech API unavailable');
-    return;
-  }
-
-  try {
-    setListenerStatus('запрос микрофона');
-    await ensureMicrophoneAccess();
-  } catch (error) {
-    const message = error?.message || 'нет доступа к микрофону';
-    setListenerStatus(`ошибка микрофона: ${message}`, 'разрешите доступ к микрофону в параметрах Windows');
-    writeLog('ERROR', 'microphone access error', { message });
-    return;
-  }
-
-  const recognition = new SpeechRecognition();
-  recognition.lang = APP_CONFIG.recognitionLang;
-  recognition.interimResults = true;
-  recognition.continuous = true;
-  recognition.maxAlternatives = 1;
-
-  let shouldRestart = true;
-  let recoverAfterError = false;
-  let consecutiveNetworkErrors = 0;
-  let restartDelay = APP_CONFIG.restartBackoffMs.min;
-
-  recognition.onstart = () => {
-    if (!inRecovery) {
-      setListenerStatus('слушаю');
-    }
-  };
-
-  recognition.onspeechstart = () => {
-    inRecovery = false;
-    consecutiveNetworkErrors = 0;
-    restartDelay = APP_CONFIG.restartBackoffMs.min;
-    setListenerStatus('обнаружена речь');
-  };
-
-  recognition.onresult = (event) => {
-    inRecovery = false;
-    consecutiveNetworkErrors = 0;
-    restartDelay = APP_CONFIG.restartBackoffMs.min;
-
-    const result = event.results[event.results.length - 1];
-    const alternative = result?.[0];
-    const transcript = (alternative?.transcript || '').trim();
-
-    if (!transcript) {
-      return;
-    }
-
-    window.electronAPI.notifyTranscript({
-      transcript,
-      confidence: alternative?.confidence ?? null,
-      isFinal: Boolean(result?.isFinal)
-    });
-
-    setListenerStatus(result?.isFinal ? 'слушаю' : 'распознаю…');
-
-    writeLog('INFO', 'voice transcript', {
-      transcript,
-      confidence: alternative?.confidence ?? null,
-      isFinal: Boolean(result?.isFinal)
-    });
-
-    const command = classifyTranscript(transcript);
-    if (command !== 'none') {
-      writeLog('INFO', 'voice command matched', { command, transcript });
-      onVoiceCommand(command);
-    }
-  };
-
-  recognition.onerror = (event) => {
-    recoverAfterError = true;
-    inRecovery = true;
-
-    const hint = getErrorHint(event.error);
-
-    if (event.error === 'network') {
-      consecutiveNetworkErrors += 1;
-      restartDelay = Math.min(
-        APP_CONFIG.restartBackoffMs.max,
-        Math.round(restartDelay * APP_CONFIG.restartBackoffMs.factor)
-      );
-
-      if (consecutiveNetworkErrors >= APP_CONFIG.maxConsecutiveNetworkErrors) {
-        setListenerStatus('сервис распознавания недоступен', hint);
-        writeLog('ERROR', 'speech service unavailable (network loop)', {
-          consecutiveNetworkErrors,
-          hint
-        });
-      } else {
-        setListenerStatus('ошибка распознавания: network', hint);
-      }
-    } else {
-      setListenerStatus(`ошибка распознавания: ${event.error}`, hint);
-    }
-
-    writeLog('WARN', 'recognition error', { error: event.error, hint, consecutiveNetworkErrors, restartDelay });
-  };
-
-  recognition.onend = () => {
-    if (!shouldRestart) {
-      return;
-    }
-
-    if (recoverAfterError) {
-      const hint = consecutiveNetworkErrors
-        ? `перезапуск через ${restartDelay} мс; при частом network проверьте сеть/фаервол/VPN`
-        : 'автоперезапуск после ошибки';
-
-      setListenerStatus('перезапуск распознавания', hint);
-    }
-
-    setTimeout(() => {
-      try {
-        recognition.start();
-        recoverAfterError = false;
-      } catch (error) {
-        setListenerStatus('не удалось перезапустить распознавание', 'перезапустите приложение и проверьте app.log');
-        writeLog('ERROR', 'failed to restart recognition', { message: error?.message });
-      }
-    }, restartDelay);
-  };
-
-  window.addEventListener('beforeunload', () => {
-    shouldRestart = false;
-    try {
-      recognition.stop();
-    } catch (error) {
-      writeLog('WARN', 'failed to stop recognition on unload', { message: error?.message });
-    }
-  });
-
-  recognition.start();
-  setListenerStatus('слушаю');
-  writeLog('INFO', 'voice listener started');
-}
-
 setupOverlayAnimations();
 setupMonitorSubscriptions();
-startRecognition();

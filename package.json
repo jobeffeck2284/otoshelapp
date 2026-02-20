@@ -6,6 +6,10 @@
   "scripts": {
     "start": "electron ."
   },
+  "dependencies": {
+    "mic": "^2.1.2",
+    "vosk": "^0.3.39"
+  },
   "devDependencies": {
     "electron": "^31.7.7"
   }

@@ -1,10 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  notifyAway: () => ipcRenderer.send('voice:away'),
-  notifyBack: () => ipcRenderer.send('voice:back'),
-  notifyTranscript: (payload) => ipcRenderer.send('voice:transcript', payload),
-  notifyStatus: (payload) => ipcRenderer.send('voice:status', payload),
   writeLog: (payload) => ipcRenderer.send('app:log', payload),
   onOverlayVisible: (callback) => ipcRenderer.on('overlay:set-visible', (_, visible) => callback(visible)),
   onTranscript: (callback) => ipcRenderer.on('transcript:update', (_, payload) => callback(payload)),
