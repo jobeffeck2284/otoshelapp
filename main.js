@@ -53,6 +53,10 @@ function getInstallHint() {
   return 'запустите: npm install; если не помогло: npm i vosk mic';
 }
 
+function getNativeRebuildHint() {
+  return `выполните: npx electron-rebuild -f -w vosk (electron=${process.versions.electron}, abi=${process.versions.modules})`;
+}
+
 function initLogger() {
   const logsDir = path.join(app.getPath('userData'), 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
@@ -164,14 +168,33 @@ class LocalVoiceEngine {
     sendStatus('инициализация offline-распознавания', 'используется локальная модель Vosk (без сети)');
 
     try {
-      require.resolve('vosk');
       require.resolve('mic');
-      this.vosk = require('vosk');
       this.micFactory = require('mic');
     } catch (error) {
       const hint = getInstallHint();
-      sendStatus('зависимости не установлены', hint);
-      logEvent('ERROR', 'failed to load offline dependencies', { message: error.message, hint });
+      sendStatus('модуль mic не установлен', hint);
+      logEvent('ERROR', 'failed to load mic dependency', { message: error.message, hint });
+      return;
+    }
+
+    try {
+      require.resolve('vosk');
+      this.vosk = require('vosk');
+    } catch (error) {
+      const installHint = getInstallHint();
+      const rebuildHint = getNativeRebuildHint();
+      const isNativeIssue = /native|NODE_MODULE_VERSION|module did not self-register|ERR_DLOPEN_FAILED|invalid ELF|wrong architecture/i.test(String(error?.message || ''));
+      const hint = isNativeIssue ? rebuildHint : `${installHint}; ${rebuildHint}`;
+      sendStatus('ошибка native-модуля vosk', hint);
+      logEvent('ERROR', 'failed to load vosk dependency', {
+        message: error.message,
+        stack: error.stack,
+        hint,
+        electron: process.versions.electron,
+        abi: process.versions.modules,
+        platform: process.platform,
+        arch: process.arch
+      });
       return;
     }
 

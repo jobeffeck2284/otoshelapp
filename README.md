@@ -38,6 +38,20 @@ model/vosk-model-small-ru-0.22
 
 3. Убедитесь, что путь входит в `VOICE_CONFIG.modelDirCandidates` в `main.js`.
 
+
+
+### Важно для Windows/Electron (vosk native)
+
+Если в логе есть `Error in native callback` или `ошибка native-модуля vosk`, это обычно означает несовместимость нативного бинарника с текущей версией Electron ABI.
+
+Выполните:
+
+```bash
+npm run rebuild-native
+```
+
+После этого перезапустите приложение (`npm start`).
+
 ## Диагностика
 
 Если не распознаёт голос:
@@ -67,6 +81,9 @@ model/vosk-model-small-ru-0.22
 - `Cannot find module 'vosk'`
   - Выполните в папке проекта: `npm install`
   - Если не помогло: `npm i vosk mic`
+- `Error in native callback` / `ошибка native-модуля vosk`
+  - Выполните: `npm run rebuild-native`
+  - Убедитесь, что версия Electron и ABI совпадают после rebuild
 - `модель Vosk не найдена`
   - Проверьте, что модель лежит в одной из папок: `models/vosk-model-small-ru-0.22` или `model/vosk-model-small-ru-0.22`.
 - Нечитаемые русские символы в PowerShell

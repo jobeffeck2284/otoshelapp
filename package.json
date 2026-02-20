@@ -4,13 +4,16 @@
   "description": "Desktop mini app with voice-triggered fullscreen away screen",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "rebuild-native": "electron-rebuild -f -w vosk",
+    "postinstall": "electron-rebuild -f -w vosk || echo \"native rebuild skipped\""
   },
   "dependencies": {
     "mic": "^2.1.2",
     "vosk": "^0.3.39"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
     "electron": "^31.7.7"
   }
 }
