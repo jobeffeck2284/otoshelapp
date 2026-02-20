@@ -34,6 +34,10 @@ const monitorTextElement = document.getElementById('monitorText');
 const monitorMetaElement = document.getElementById('monitorMeta');
 const monitorStatusElement = document.getElementById('monitorStatus');
 
+function writeLog(level, message, meta = undefined) {
+  window.electronAPI.writeLog({ level, message, meta: { mode, ...meta } });
+}
+
 if (overlayTextElement) {
   overlayTextElement.textContent = APP_CONFIG.overlayText;
 }
@@ -59,6 +63,7 @@ if (mode === 'monitor') {
 let lastTriggerTs = 0;
 let overlayVisible = false;
 let listenerStatus = '';
+let inRecovery = false;
 
 function setListenerStatus(status) {
   if (mode !== 'listener' || !status || listenerStatus === status) {
@@ -70,6 +75,7 @@ function setListenerStatus(status) {
     status,
     ts: Date.now()
   });
+  writeLog('INFO', `status changed: ${status}`);
 }
 
 function normalize(text) {
@@ -215,7 +221,7 @@ async function startRecognition() {
 
   if (!SpeechRecognition) {
     setListenerStatus('Web Speech API недоступен');
-    console.error('[voice] Web Speech API не поддерживается в текущей среде Electron.');
+    writeLog('ERROR', 'Web Speech API unavailable');
     return;
   }
 
@@ -225,7 +231,7 @@ async function startRecognition() {
   } catch (error) {
     const message = error?.message || 'нет доступа к микрофону';
     setListenerStatus(`ошибка микрофона: ${message}`);
-    console.error('[voice] microphone access error:', error);
+    writeLog('ERROR', 'microphone access error', { message });
     return;
   }
 
@@ -239,14 +245,19 @@ async function startRecognition() {
   let recoverAfterError = false;
 
   recognition.onstart = () => {
-    setListenerStatus('слушаю');
+    if (!inRecovery) {
+      setListenerStatus('слушаю');
+    }
   };
 
   recognition.onspeechstart = () => {
+    inRecovery = false;
     setListenerStatus('обнаружена речь');
   };
 
   recognition.onresult = (event) => {
+    inRecovery = false;
+
     const result = event.results[event.results.length - 1];
     const alternative = result?.[0];
     const transcript = (alternative?.transcript || '').trim();
@@ -263,18 +274,24 @@ async function startRecognition() {
 
     setListenerStatus(result?.isFinal ? 'слушаю' : 'распознаю…');
 
-    console.log(`[voice] ${transcript}`);
+    writeLog('INFO', 'voice transcript', {
+      transcript,
+      confidence: alternative?.confidence ?? null,
+      isFinal: Boolean(result?.isFinal)
+    });
+
     const command = classifyTranscript(transcript);
     if (command !== 'none') {
-      console.log(`[voice] matched: ${command}`);
+      writeLog('INFO', 'voice command matched', { command, transcript });
       onVoiceCommand(command);
     }
   };
 
   recognition.onerror = (event) => {
     recoverAfterError = true;
+    inRecovery = true;
     setListenerStatus(`ошибка распознавания: ${event.error}`);
-    console.warn(`[voice] recognition error: ${event.error}`);
+    writeLog('WARN', 'recognition error', { error: event.error });
   };
 
   recognition.onend = () => {
@@ -283,6 +300,7 @@ async function startRecognition() {
     }
 
     if (recoverAfterError) {
+      inRecovery = true;
       setListenerStatus('перезапуск распознавания');
     }
 
@@ -292,7 +310,7 @@ async function startRecognition() {
         recoverAfterError = false;
       } catch (error) {
         setListenerStatus('не удалось перезапустить распознавание');
-        console.warn('[voice] failed to restart recognition:', error);
+        writeLog('ERROR', 'failed to restart recognition', { message: error?.message });
       }
     }, 350);
   };
@@ -302,13 +320,13 @@ async function startRecognition() {
     try {
       recognition.stop();
     } catch (error) {
-      console.warn('[voice] failed to stop recognition on unload:', error);
+      writeLog('WARN', 'failed to stop recognition on unload', { message: error?.message });
     }
   });
 
   recognition.start();
   setListenerStatus('слушаю');
-  console.log('[voice] listening started');
+  writeLog('INFO', 'voice listener started');
 }
 
 setupOverlayAnimations();

@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 
@@ -8,19 +9,46 @@ let listenerWindow;
 let monitorWindow;
 let isOverlayVisible = false;
 let pendingHide = false;
+let logFilePath = '';
+
+function initLogger() {
+  const logsDir = path.join(app.getPath('userData'), 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  logFilePath = path.join(logsDir, 'app.log');
+  fs.appendFileSync(logFilePath, `\n=== app start ${new Date().toISOString()} ===\n`);
+}
+
+function logEvent(level, message, meta) {
+  const ts = new Date().toISOString();
+  const metaText = meta ? ` ${JSON.stringify(meta)}` : '';
+  const line = `[${ts}] [${level}] ${message}${metaText}\n`;
+
+  if (level === 'ERROR') {
+    console.error(line.trim());
+  } else if (level === 'WARN') {
+    console.warn(line.trim());
+  } else {
+    console.log(line.trim());
+  }
+
+  if (logFilePath) {
+    fs.appendFile(logFilePath, line, () => {});
+  }
+}
 
 function allowMicrophonePermissions() {
   const defaultSession = session.defaultSession;
 
-  defaultSession.setPermissionCheckHandler((webContents, permission) => {
+  defaultSession.setPermissionCheckHandler((_, permission) => {
     if (permission === 'media' || permission === 'audioCapture' || permission === 'microphone') {
       return true;
     }
     return false;
   });
 
-  defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+  defaultSession.setPermissionRequestHandler((_, permission, callback) => {
     if (permission === 'media' || permission === 'audioCapture' || permission === 'microphone') {
+      logEvent('INFO', 'microphone permission granted', { permission });
       callback(true);
       return;
     }
@@ -48,6 +76,7 @@ function createOverlayWindow() {
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1);
   overlayWindow.loadFile(path.join(__dirname, 'renderer/index.html'));
+  logEvent('INFO', 'overlay window created');
 
   overlayWindow.on('closed', () => {
     overlayWindow = null;
@@ -75,6 +104,7 @@ function createListenerWindow() {
   listenerWindow.loadFile(path.join(__dirname, 'renderer/index.html'), {
     query: { mode: 'listener' }
   });
+  logEvent('INFO', 'listener window created');
 
   listenerWindow.on('closed', () => {
     listenerWindow = null;
@@ -115,6 +145,7 @@ function createMonitorWindow() {
   monitorWindow.loadFile(path.join(__dirname, 'renderer/index.html'), {
     query: { mode: 'monitor' }
   });
+  logEvent('INFO', 'monitor window created');
 
   monitorWindow.on('closed', () => {
     monitorWindow = null;
@@ -131,6 +162,7 @@ function showOverlay() {
   overlayWindow.showInactive();
   overlayWindow.webContents.send('overlay:set-visible', true);
   isOverlayVisible = true;
+  logEvent('INFO', 'overlay shown');
 }
 
 function hideOverlay() {
@@ -146,16 +178,19 @@ function hideOverlay() {
       overlayWindow.hide();
       isOverlayVisible = false;
       pendingHide = false;
+      logEvent('INFO', 'overlay hidden');
     }
   }, 800);
 }
 
 function setupIpc() {
   ipcMain.on('voice:away', () => {
+    logEvent('INFO', 'voice command away');
     showOverlay();
   });
 
   ipcMain.on('voice:back', () => {
+    logEvent('INFO', 'voice command back');
     hideOverlay();
   });
 
@@ -171,6 +206,13 @@ function setupIpc() {
     }
   });
 
+  ipcMain.on('app:log', (_, payload) => {
+    const level = payload?.level || 'INFO';
+    const message = payload?.message || 'renderer log';
+    const meta = payload?.meta;
+    logEvent(level.toUpperCase(), message, meta);
+  });
+
   ipcMain.on('overlay:hide-complete', () => {
     if (overlayWindow) {
       overlayWindow.hide();
@@ -181,6 +223,8 @@ function setupIpc() {
 }
 
 app.whenReady().then(() => {
+  initLogger();
+  logEvent('INFO', 'app ready', { userData: app.getPath('userData'), logFilePath });
   allowMicrophonePermissions();
 
   if (process.platform === 'win32' && ENABLE_AUTO_LAUNCH) {
@@ -204,8 +248,17 @@ app.whenReady().then(() => {
   });
 });
 
+process.on('uncaughtException', (error) => {
+  logEvent('ERROR', 'uncaughtException', { message: error.message, stack: error.stack });
+});
+
+process.on('unhandledRejection', (reason) => {
+  logEvent('ERROR', 'unhandledRejection', { reason: String(reason) });
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    logEvent('INFO', 'app quit');
     app.quit();
   }
 });
