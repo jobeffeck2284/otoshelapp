@@ -11,12 +11,21 @@
   </head>
   <body>
     <div class="ambient" aria-hidden="true"></div>
+
     <main class="overlay hidden" id="overlay">
       <section class="card">
         <p class="label">Статус</p>
         <h1 id="overlayText">Я отошел. Скоро вернусь.</h1>
       </section>
     </main>
+
+    <aside class="monitor hidden" id="monitor">
+      <div class="monitor-panel">
+        <p class="monitor-label">Распознано:</p>
+        <p class="monitor-text" id="monitorText">Тишина…</p>
+        <p class="monitor-meta" id="monitorMeta">ожидание голоса</p>
+      </div>
+    </aside>
 
     <script src="./voiceListener.js" type="module"></script>
   </body>

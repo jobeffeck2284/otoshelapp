@@ -2,6 +2,7 @@ const APP_CONFIG = {
   overlayText: 'Я отошел. Скоро вернусь.',
   debounceMs: 8000,
   recognitionLang: 'ru-RU',
+  monitorEmptyText: 'Тишина…',
   triggerPhrases: {
     away: [
       'я отойду',
@@ -28,6 +29,9 @@ const APP_CONFIG = {
 const mode = new URLSearchParams(window.location.search).get('mode') || 'overlay';
 const overlayElement = document.getElementById('overlay');
 const overlayTextElement = document.getElementById('overlayText');
+const monitorElement = document.getElementById('monitor');
+const monitorTextElement = document.getElementById('monitorText');
+const monitorMetaElement = document.getElementById('monitorMeta');
 
 if (overlayTextElement) {
   overlayTextElement.textContent = APP_CONFIG.overlayText;
@@ -37,6 +41,18 @@ if (mode === 'listener') {
   document.body.style.background = 'transparent';
   document.querySelector('.ambient')?.remove();
   overlayElement?.remove();
+  monitorElement?.remove();
+}
+
+if (mode === 'overlay') {
+  monitorElement?.remove();
+}
+
+if (mode === 'monitor') {
+  document.querySelector('.ambient')?.remove();
+  overlayElement?.remove();
+  document.body.style.background = 'transparent';
+  monitorElement?.classList.remove('hidden');
 }
 
 let lastTriggerTs = 0;
@@ -91,6 +107,20 @@ function canTrigger() {
   return true;
 }
 
+function updateMonitor(payload) {
+  if (mode !== 'monitor' || !monitorTextElement || !monitorMetaElement) {
+    return;
+  }
+
+  const phrase = payload?.transcript?.trim() || APP_CONFIG.monitorEmptyText;
+  const confidence = typeof payload?.confidence === 'number' ? `${Math.round(payload.confidence * 100)}%` : '—';
+  const now = new Date();
+  const timestamp = now.toLocaleTimeString('ru-RU');
+
+  monitorTextElement.textContent = phrase;
+  monitorMetaElement.textContent = `уверенность: ${confidence} • ${timestamp}`;
+}
+
 function onVoiceCommand(kind) {
   if (kind === 'away' && !overlayVisible && canTrigger()) {
     window.electronAPI.notifyAway();
@@ -104,7 +134,7 @@ function onVoiceCommand(kind) {
 }
 
 function setupOverlayAnimations() {
-  if (mode === 'listener' || !overlayElement) {
+  if (mode !== 'overlay' || !overlayElement) {
     return;
   }
 
@@ -121,7 +151,21 @@ function setupOverlayAnimations() {
   });
 }
 
+function setupMonitorSubscriptions() {
+  if (mode !== 'monitor') {
+    return;
+  }
+
+  window.electronAPI.onTranscript((payload) => {
+    updateMonitor(payload);
+  });
+}
+
 function startRecognition() {
+  if (mode !== 'listener') {
+    return;
+  }
+
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
@@ -136,14 +180,19 @@ function startRecognition() {
   recognition.maxAlternatives = 1;
 
   recognition.onresult = (event) => {
-    const transcript = Array.from(event.results)
-      .map((result) => result[0]?.transcript ?? '')
-      .join(' ')
-      .trim();
+    const result = event.results[event.results.length - 1];
+    const alternative = result?.[0];
+    const transcript = (alternative?.transcript || '').trim();
 
     if (!transcript) {
       return;
     }
+
+    window.electronAPI.notifyTranscript({
+      transcript,
+      confidence: alternative?.confidence ?? null,
+      isFinal: Boolean(result?.isFinal)
+    });
 
     console.log(`[voice] ${transcript}`);
     const command = classifyTranscript(transcript);
@@ -166,4 +215,5 @@ function startRecognition() {
 }
 
 setupOverlayAnimations();
+setupMonitorSubscriptions();
 startRecognition();

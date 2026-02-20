@@ -5,6 +5,7 @@ const ENABLE_AUTO_LAUNCH = false;
 
 let overlayWindow;
 let listenerWindow;
+let monitorWindow;
 let isOverlayVisible = false;
 let pendingHide = false;
 
@@ -61,6 +62,46 @@ function createListenerWindow() {
   });
 }
 
+function createMonitorWindow() {
+  const display = screen.getPrimaryDisplay();
+  const width = 430;
+  const height = 180;
+  const padding = 20;
+
+  monitorWindow = new BrowserWindow({
+    show: true,
+    width,
+    height,
+    x: display.workArea.x + display.workArea.width - width - padding,
+    y: display.workArea.y + padding,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+
+  monitorWindow.setAlwaysOnTop(true, 'floating');
+  monitorWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  monitorWindow.loadFile(path.join(__dirname, 'renderer/index.html'), {
+    query: { mode: 'monitor' }
+  });
+
+  monitorWindow.on('closed', () => {
+    monitorWindow = null;
+  });
+}
+
 function showOverlay() {
   if (!overlayWindow || isOverlayVisible) {
     return;
@@ -99,6 +140,12 @@ function setupIpc() {
     hideOverlay();
   });
 
+  ipcMain.on('voice:transcript', (_, payload) => {
+    if (monitorWindow) {
+      monitorWindow.webContents.send('transcript:update', payload);
+    }
+  });
+
   ipcMain.on('overlay:hide-complete', () => {
     if (overlayWindow) {
       overlayWindow.hide();
@@ -118,12 +165,14 @@ app.whenReady().then(() => {
 
   createOverlayWindow();
   createListenerWindow();
+  createMonitorWindow();
   setupIpc();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createOverlayWindow();
       createListenerWindow();
+      createMonitorWindow();
     }
   });
 });
