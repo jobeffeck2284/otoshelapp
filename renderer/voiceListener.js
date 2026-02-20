@@ -58,14 +58,18 @@ if (mode === 'monitor') {
 
 let lastTriggerTs = 0;
 let overlayVisible = false;
+let listenerStatus = '';
 
 function setListenerStatus(status) {
-  if (mode === 'listener') {
-    window.electronAPI.notifyStatus({
-      status,
-      ts: Date.now()
-    });
+  if (mode !== 'listener' || !status || listenerStatus === status) {
+    return;
   }
+
+  listenerStatus = status;
+  window.electronAPI.notifyStatus({
+    status,
+    ts: Date.now()
+  });
 }
 
 function normalize(text) {
@@ -231,6 +235,9 @@ async function startRecognition() {
   recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
+  let shouldRestart = true;
+  let recoverAfterError = false;
+
   recognition.onstart = () => {
     setListenerStatus('слушаю');
   };
@@ -265,21 +272,39 @@ async function startRecognition() {
   };
 
   recognition.onerror = (event) => {
+    recoverAfterError = true;
     setListenerStatus(`ошибка распознавания: ${event.error}`);
     console.warn(`[voice] recognition error: ${event.error}`);
   };
 
   recognition.onend = () => {
-    setListenerStatus('перезапуск распознавания');
+    if (!shouldRestart) {
+      return;
+    }
+
+    if (recoverAfterError) {
+      setListenerStatus('перезапуск распознавания');
+    }
+
     setTimeout(() => {
       try {
         recognition.start();
+        recoverAfterError = false;
       } catch (error) {
         setListenerStatus('не удалось перезапустить распознавание');
         console.warn('[voice] failed to restart recognition:', error);
       }
     }, 350);
   };
+
+  window.addEventListener('beforeunload', () => {
+    shouldRestart = false;
+    try {
+      recognition.stop();
+    } catch (error) {
+      console.warn('[voice] failed to stop recognition on unload:', error);
+    }
+  });
 
   recognition.start();
   setListenerStatus('слушаю');
