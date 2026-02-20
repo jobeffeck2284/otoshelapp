@@ -1,5 +1,5 @@
 const path = require('path');
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 
 const ENABLE_AUTO_LAUNCH = false;
 
@@ -8,6 +8,25 @@ let listenerWindow;
 let monitorWindow;
 let isOverlayVisible = false;
 let pendingHide = false;
+
+function allowMicrophonePermissions() {
+  const defaultSession = session.defaultSession;
+
+  defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === 'media' || permission === 'audioCapture' || permission === 'microphone') {
+      return true;
+    }
+    return false;
+  });
+
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'audioCapture' || permission === 'microphone') {
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+}
 
 function createOverlayWindow() {
   overlayWindow = new BrowserWindow({
@@ -65,7 +84,7 @@ function createListenerWindow() {
 function createMonitorWindow() {
   const display = screen.getPrimaryDisplay();
   const width = 430;
-  const height = 180;
+  const height = 220;
   const padding = 20;
 
   monitorWindow = new BrowserWindow({
@@ -146,6 +165,12 @@ function setupIpc() {
     }
   });
 
+  ipcMain.on('voice:status', (_, payload) => {
+    if (monitorWindow) {
+      monitorWindow.webContents.send('status:update', payload);
+    }
+  });
+
   ipcMain.on('overlay:hide-complete', () => {
     if (overlayWindow) {
       overlayWindow.hide();
@@ -156,6 +181,8 @@ function setupIpc() {
 }
 
 app.whenReady().then(() => {
+  allowMicrophonePermissions();
+
   if (process.platform === 'win32' && ENABLE_AUTO_LAUNCH) {
     app.setLoginItemSettings({
       openAtLogin: true,

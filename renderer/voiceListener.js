@@ -32,6 +32,7 @@ const overlayTextElement = document.getElementById('overlayText');
 const monitorElement = document.getElementById('monitor');
 const monitorTextElement = document.getElementById('monitorText');
 const monitorMetaElement = document.getElementById('monitorMeta');
+const monitorStatusElement = document.getElementById('monitorStatus');
 
 if (overlayTextElement) {
   overlayTextElement.textContent = APP_CONFIG.overlayText;
@@ -57,6 +58,15 @@ if (mode === 'monitor') {
 
 let lastTriggerTs = 0;
 let overlayVisible = false;
+
+function setListenerStatus(status) {
+  if (mode === 'listener') {
+    window.electronAPI.notifyStatus({
+      status,
+      ts: Date.now()
+    });
+  }
+}
 
 function normalize(text) {
   return text
@@ -121,6 +131,15 @@ function updateMonitor(payload) {
   monitorMetaElement.textContent = `уверенность: ${confidence} • ${timestamp}`;
 }
 
+function updateMonitorStatus(payload) {
+  if (mode !== 'monitor' || !monitorStatusElement) {
+    return;
+  }
+
+  const status = payload?.status || 'неизвестно';
+  monitorStatusElement.textContent = `статус: ${status}`;
+}
+
 function onVoiceCommand(kind) {
   if (kind === 'away' && !overlayVisible && canTrigger()) {
     window.electronAPI.notifyAway();
@@ -159,9 +178,31 @@ function setupMonitorSubscriptions() {
   window.electronAPI.onTranscript((payload) => {
     updateMonitor(payload);
   });
+
+  window.electronAPI.onStatus((payload) => {
+    updateMonitorStatus(payload);
+  });
 }
 
-function startRecognition() {
+async function ensureMicrophoneAccess() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setListenerStatus('mediaDevices API недоступен');
+    throw new Error('mediaDevices API недоступен');
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  });
+
+  stream.getTracks().forEach((track) => track.stop());
+  setListenerStatus('микрофон доступен');
+}
+
+async function startRecognition() {
   if (mode !== 'listener') {
     return;
   }
@@ -169,7 +210,18 @@ function startRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
+    setListenerStatus('Web Speech API недоступен');
     console.error('[voice] Web Speech API не поддерживается в текущей среде Electron.');
+    return;
+  }
+
+  try {
+    setListenerStatus('запрос микрофона');
+    await ensureMicrophoneAccess();
+  } catch (error) {
+    const message = error?.message || 'нет доступа к микрофону';
+    setListenerStatus(`ошибка микрофона: ${message}`);
+    console.error('[voice] microphone access error:', error);
     return;
   }
 
@@ -178,6 +230,14 @@ function startRecognition() {
   recognition.interimResults = true;
   recognition.continuous = true;
   recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    setListenerStatus('слушаю');
+  };
+
+  recognition.onspeechstart = () => {
+    setListenerStatus('обнаружена речь');
+  };
 
   recognition.onresult = (event) => {
     const result = event.results[event.results.length - 1];
@@ -194,6 +254,8 @@ function startRecognition() {
       isFinal: Boolean(result?.isFinal)
     });
 
+    setListenerStatus(result?.isFinal ? 'слушаю' : 'распознаю…');
+
     console.log(`[voice] ${transcript}`);
     const command = classifyTranscript(transcript);
     if (command !== 'none') {
@@ -203,14 +265,24 @@ function startRecognition() {
   };
 
   recognition.onerror = (event) => {
+    setListenerStatus(`ошибка распознавания: ${event.error}`);
     console.warn(`[voice] recognition error: ${event.error}`);
   };
 
   recognition.onend = () => {
-    setTimeout(() => recognition.start(), 350);
+    setListenerStatus('перезапуск распознавания');
+    setTimeout(() => {
+      try {
+        recognition.start();
+      } catch (error) {
+        setListenerStatus('не удалось перезапустить распознавание');
+        console.warn('[voice] failed to restart recognition:', error);
+      }
+    }, 350);
   };
 
   recognition.start();
+  setListenerStatus('слушаю');
   console.log('[voice] listening started');
 }
 

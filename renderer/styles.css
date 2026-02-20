@@ -97,7 +97,7 @@ h1 {
 
 .monitor-panel {
   width: min(390px, calc(100vw - 24px));
-  min-height: 156px;
+  min-height: 178px;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(13, 13, 13, 0.74);
@@ -154,4 +154,10 @@ h1 {
   50% {
     transform: scale(1.025);
   }
+}
+
+.monitor-status {
+  margin: 10px 0 0;
+  font-size: 12px;
+  opacity: 0.76;
 }
