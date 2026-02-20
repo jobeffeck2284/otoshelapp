@@ -3,6 +3,12 @@ const APP_CONFIG = {
   debounceMs: 8000,
   recognitionLang: 'ru-RU',
   monitorEmptyText: 'Тишина…',
+  maxConsecutiveNetworkErrors: 4,
+  restartBackoffMs: {
+    min: 400,
+    max: 12000,
+    factor: 1.8
+  },
   triggerPhrases: {
     away: [
       'я отойду',
@@ -33,6 +39,7 @@ const monitorElement = document.getElementById('monitor');
 const monitorTextElement = document.getElementById('monitorText');
 const monitorMetaElement = document.getElementById('monitorMeta');
 const monitorStatusElement = document.getElementById('monitorStatus');
+const monitorHintElement = document.getElementById('monitorHint');
 
 function writeLog(level, message, meta = undefined) {
   window.electronAPI.writeLog({ level, message, meta: { mode, ...meta } });
@@ -65,7 +72,7 @@ let overlayVisible = false;
 let listenerStatus = '';
 let inRecovery = false;
 
-function setListenerStatus(status) {
+function setListenerStatus(status, hint = '') {
   if (mode !== 'listener' || !status || listenerStatus === status) {
     return;
   }
@@ -73,9 +80,10 @@ function setListenerStatus(status) {
   listenerStatus = status;
   window.electronAPI.notifyStatus({
     status,
+    hint,
     ts: Date.now()
   });
-  writeLog('INFO', `status changed: ${status}`);
+  writeLog('INFO', `status changed: ${status}`, hint ? { hint } : undefined);
 }
 
 function normalize(text) {
@@ -147,7 +155,11 @@ function updateMonitorStatus(payload) {
   }
 
   const status = payload?.status || 'неизвестно';
+  const hint = payload?.hint || '—';
   monitorStatusElement.textContent = `статус: ${status}`;
+  if (monitorHintElement) {
+    monitorHintElement.textContent = `подсказка: ${hint}`;
+  }
 }
 
 function onVoiceCommand(kind) {
@@ -194,9 +206,20 @@ function setupMonitorSubscriptions() {
   });
 }
 
+function getErrorHint(errorCode) {
+  const hints = {
+    network: 'нет связи с сервисом речи: проверьте интернет/VPN/фаервол и доступ к Google Speech',
+    'not-allowed': 'доступ к микрофону запрещен в Windows или браузерном движке Electron',
+    'service-not-allowed': 'сервис распознавания заблокирован политиками системы/браузера',
+    'no-speech': 'речь не обнаружена: проверьте выбранный микрофон и уровень сигнала',
+    'audio-capture': 'аудиовход недоступен: проверьте устройство записи в Windows'
+  };
+  return hints[errorCode] || 'см. app.log для кода ошибки и диагностики';
+}
+
 async function ensureMicrophoneAccess() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    setListenerStatus('mediaDevices API недоступен');
+    setListenerStatus('mediaDevices API недоступен', 'в сборке Electron нет API mediaDevices');
     throw new Error('mediaDevices API недоступен');
   }
 
@@ -220,7 +243,7 @@ async function startRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
-    setListenerStatus('Web Speech API недоступен');
+    setListenerStatus('Web Speech API недоступен', 'в этой среде нужен fallback на оффлайн движок, например Vosk');
     writeLog('ERROR', 'Web Speech API unavailable');
     return;
   }
@@ -230,7 +253,7 @@ async function startRecognition() {
     await ensureMicrophoneAccess();
   } catch (error) {
     const message = error?.message || 'нет доступа к микрофону';
-    setListenerStatus(`ошибка микрофона: ${message}`);
+    setListenerStatus(`ошибка микрофона: ${message}`, 'разрешите доступ к микрофону в параметрах Windows');
     writeLog('ERROR', 'microphone access error', { message });
     return;
   }
@@ -243,6 +266,8 @@ async function startRecognition() {
 
   let shouldRestart = true;
   let recoverAfterError = false;
+  let consecutiveNetworkErrors = 0;
+  let restartDelay = APP_CONFIG.restartBackoffMs.min;
 
   recognition.onstart = () => {
     if (!inRecovery) {
@@ -252,11 +277,15 @@ async function startRecognition() {
 
   recognition.onspeechstart = () => {
     inRecovery = false;
+    consecutiveNetworkErrors = 0;
+    restartDelay = APP_CONFIG.restartBackoffMs.min;
     setListenerStatus('обнаружена речь');
   };
 
   recognition.onresult = (event) => {
     inRecovery = false;
+    consecutiveNetworkErrors = 0;
+    restartDelay = APP_CONFIG.restartBackoffMs.min;
 
     const result = event.results[event.results.length - 1];
     const alternative = result?.[0];
@@ -290,8 +319,30 @@ async function startRecognition() {
   recognition.onerror = (event) => {
     recoverAfterError = true;
     inRecovery = true;
-    setListenerStatus(`ошибка распознавания: ${event.error}`);
-    writeLog('WARN', 'recognition error', { error: event.error });
+
+    const hint = getErrorHint(event.error);
+
+    if (event.error === 'network') {
+      consecutiveNetworkErrors += 1;
+      restartDelay = Math.min(
+        APP_CONFIG.restartBackoffMs.max,
+        Math.round(restartDelay * APP_CONFIG.restartBackoffMs.factor)
+      );
+
+      if (consecutiveNetworkErrors >= APP_CONFIG.maxConsecutiveNetworkErrors) {
+        setListenerStatus('сервис распознавания недоступен', hint);
+        writeLog('ERROR', 'speech service unavailable (network loop)', {
+          consecutiveNetworkErrors,
+          hint
+        });
+      } else {
+        setListenerStatus('ошибка распознавания: network', hint);
+      }
+    } else {
+      setListenerStatus(`ошибка распознавания: ${event.error}`, hint);
+    }
+
+    writeLog('WARN', 'recognition error', { error: event.error, hint, consecutiveNetworkErrors, restartDelay });
   };
 
   recognition.onend = () => {
@@ -300,8 +351,11 @@ async function startRecognition() {
     }
 
     if (recoverAfterError) {
-      inRecovery = true;
-      setListenerStatus('перезапуск распознавания');
+      const hint = consecutiveNetworkErrors
+        ? `перезапуск через ${restartDelay} мс; при частом network проверьте сеть/фаервол/VPN`
+        : 'автоперезапуск после ошибки';
+
+      setListenerStatus('перезапуск распознавания', hint);
     }
 
     setTimeout(() => {
@@ -309,10 +363,10 @@ async function startRecognition() {
         recognition.start();
         recoverAfterError = false;
       } catch (error) {
-        setListenerStatus('не удалось перезапустить распознавание');
+        setListenerStatus('не удалось перезапустить распознавание', 'перезапустите приложение и проверьте app.log');
         writeLog('ERROR', 'failed to restart recognition', { message: error?.message });
       }
-    }, 350);
+    }, restartDelay);
   };
 
   window.addEventListener('beforeunload', () => {
