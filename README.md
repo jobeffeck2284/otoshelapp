@@ -20,7 +20,7 @@ npm start
 
 Основные параметры в `main.js` в объекте `VOICE_CONFIG`:
 
-- `modelPath` — путь до локальной модели Vosk.
+- `modelDirCandidates` — список путей, где приложение ищет локальную модель Vosk.
 - `triggerPhrases.away` — фразы для включения экрана.
 - `triggerPhrases.back` — фразы для закрытия экрана.
 - `debounceMs` — защита от многократных срабатываний.
@@ -32,9 +32,11 @@ npm start
 
 ```text
 models/vosk-model-small-ru-0.22
+# или
+model/vosk-model-small-ru-0.22
 ```
 
-3. Убедитесь, что путь совпадает с `VOICE_CONFIG.modelPath` в `main.js`.
+3. Убедитесь, что путь входит в `VOICE_CONFIG.modelDirCandidates` в `main.js`.
 
 ## Диагностика
 
@@ -58,3 +60,14 @@ models/vosk-model-small-ru-0.22
 - `renderer/index.html` — интерфейс для overlay и monitor.
 - `renderer/styles.css` — визуальные эффекты/анимации.
 - `renderer/voiceListener.js` — UI-подписки на статусы/транскрипты.
+
+
+### Частые ошибки из лога
+
+- `Cannot find module 'vosk'`
+  - Выполните в папке проекта: `npm install`
+  - Если не помогло: `npm i vosk mic`
+- `модель Vosk не найдена`
+  - Проверьте, что модель лежит в одной из папок: `models/vosk-model-small-ru-0.22` или `model/vosk-model-small-ru-0.22`.
+- Нечитаемые русские символы в PowerShell
+  - Выполните: `chcp 65001` и перезапустите терминал.

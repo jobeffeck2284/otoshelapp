@@ -5,7 +5,11 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const ENABLE_AUTO_LAUNCH = false;
 
 const VOICE_CONFIG = {
-  modelPath: path.join(__dirname, 'models', 'vosk-model-small-ru-0.22'),
+  modelDirCandidates: [
+    path.join(__dirname, 'models', 'vosk-model-small-ru-0.22'),
+    path.join(__dirname, 'model', 'vosk-model-small-ru-0.22'),
+    path.join(__dirname, 'vosk-model-small-ru-0.22')
+  ],
   sampleRate: 16000,
   restartDelayMs: 1500,
   debounceMs: 8000,
@@ -38,6 +42,16 @@ let isOverlayVisible = false;
 let pendingHide = false;
 let logFilePath = '';
 let voiceEngine = null;
+
+
+function resolveModelPath() {
+  const foundPath = VOICE_CONFIG.modelDirCandidates.find((candidate) => fs.existsSync(candidate));
+  return foundPath || null;
+}
+
+function getInstallHint() {
+  return 'запустите: npm install; если не помогло: npm i vosk mic';
+}
 
 function initLogger() {
   const logsDir = path.join(app.getPath('userData'), 'logs');
@@ -150,24 +164,30 @@ class LocalVoiceEngine {
     sendStatus('инициализация offline-распознавания', 'используется локальная модель Vosk (без сети)');
 
     try {
+      require.resolve('vosk');
+      require.resolve('mic');
       this.vosk = require('vosk');
       this.micFactory = require('mic');
     } catch (error) {
-      sendStatus('ошибка инициализации', 'установите зависимости npm install (vosk, mic)');
-      logEvent('ERROR', 'failed to load offline dependencies', { message: error.message });
+      const hint = getInstallHint();
+      sendStatus('зависимости не установлены', hint);
+      logEvent('ERROR', 'failed to load offline dependencies', { message: error.message, hint });
       return;
     }
 
-    if (!fs.existsSync(VOICE_CONFIG.modelPath)) {
-      sendStatus('модель Vosk не найдена', `поместите модель в ${VOICE_CONFIG.modelPath}`);
-      logEvent('ERROR', 'vosk model missing', { modelPath: VOICE_CONFIG.modelPath });
+    const modelPath = resolveModelPath();
+    if (!modelPath) {
+      const hint = `создайте одну из папок: ${VOICE_CONFIG.modelDirCandidates.join(' | ')}`;
+      sendStatus('модель Vosk не найдена', hint);
+      logEvent('ERROR', 'vosk model missing', { candidates: VOICE_CONFIG.modelDirCandidates, hint });
       return;
     }
 
     this.vosk.setLogLevel(0);
-    this.model = new this.vosk.Model(VOICE_CONFIG.modelPath);
+    this.model = new this.vosk.Model(modelPath);
     this.recognizer = new this.vosk.Recognizer({ model: this.model, sampleRate: VOICE_CONFIG.sampleRate });
 
+    logEvent('INFO', 'vosk model loaded', { modelPath });
     this.startMic();
   }
 
